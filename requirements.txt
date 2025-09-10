@@ -8,3 +8,10 @@ testcontainers==4.7.2
 
 # Pure-Python Kafka client (no system deps like librdkafka)
 kafka-python-ng==2.2.3
+
+# Flink Python API
+apache-flink==1.20.0
+pyflink==1.20.0
+
+# Additional dependencies for Flink
+py4j==0.10.9.7
