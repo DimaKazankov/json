@@ -1,0 +1,10 @@
+# Core testing stack
+pytest==8.3.2
+requests==2.32.3
+
+# Testcontainers (Python)
+# Pinned to a stable recent release; adjust if your env needs a different pin
+testcontainers==4.7.2
+
+# Pure-Python Kafka client (no system deps like librdkafka)
+kafka-python-ng==2.2.3
