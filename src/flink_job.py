@@ -9,9 +9,6 @@ from typing import Dict, Any
 
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.table import StreamTableEnvironment
-from pyflink.table.descriptors import Schema, OldCsv, FileSystem, ConnectorDescriptor
-from pyflink.table.types import DataTypes
-from pyflink.table.window import Tumble
 
 
 class MessageEnricher:
