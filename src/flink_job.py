@@ -3,7 +3,7 @@ Flink Job for consuming messages from topic A and publishing enriched messages t
 """
 
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.connectors.kafka import KafkaSource, KafkaSink, KafkaRecordSerializationSchema, FlinkKafkaProducer
+from pyflink.datastream.connectors.kafka import KafkaSource, KafkaSink, KafkaRecordSerializationSchema
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.typeinfo import Types
 from pyflink.common import WatermarkStrategy
@@ -87,30 +87,7 @@ class FlinkKafkaJob:
                 .build()
             ) \
             .build()
-    
-    def create_kafka_producer_sink(self, topic: str):
-        """
-        Create a Kafka producer sink using the older FlinkKafkaProducer API.
-        
-        Args:
-            topic: Kafka topic name
-            
-        Returns:
-            FlinkKafkaProducer instance
-        """
-        return FlinkKafkaProducer(
-            topic=topic,
-            serialization_schema=SimpleStringSchema(),
-            producer_config={
-                'bootstrap.servers': self.kafka_bootstrap_servers,
-                'acks': 'all',
-                'retries': '3',
-                'batch.size': '16384',
-                'linger.ms': '1',
-                'buffer.memory': '33554432'
-            }
-        )
-    
+
     def run_job(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
         """
         Run the Flink job to process messages from source topic to sink topic.
@@ -146,13 +123,6 @@ class FlinkKafkaJob:
             )
 
             enriched_stream.sink_to(kafka_sink)
-            
-            # Add both sinks to the same enriched stream
-            # print("Adding print sink for debugging...")
-            # enriched_stream.print("Sink Output")
-            
-            # print("Adding Kafka producer sink...")
-            # enriched_stream.add_sink(kafka_producer)
             
             # Execute the job
             print("Executing Flink job...")
