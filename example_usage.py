@@ -7,7 +7,7 @@ This script demonstrates how to send test messages and verify the enrichment pro
 import time
 import json
 from kafka import KafkaProducer, KafkaConsumer
-from src.flink_job import MessageEnricher
+from src.flink_job import MessageEnricher, FlinkKafkaJob
 
 
 def send_test_messages(bootstrap_servers: str, topic: str, num_messages: int = 5):
@@ -99,6 +99,30 @@ def demonstrate_enrichment():
     print(f"  Processing node: {enriched_message['processing_node']}")
 
 
+def demonstrate_flink_job_creation():
+    """Demonstrate creating a FlinkKafkaJob instance."""
+    print("=" * 60)
+    print("FlinkKafkaJob Creation Demonstration")
+    print("=" * 60)
+    
+    # Create a Flink job instance
+    job = FlinkKafkaJob(kafka_bootstrap_servers="localhost:9092")
+    
+    print("FlinkKafkaJob created successfully!")
+    print(f"  Kafka Bootstrap Servers: {job.kafka_bootstrap_servers}")
+    print(f"  Stream Execution Environment: {job.env}")
+    print(f"  Parallelism: {job.env.get_parallelism()}")
+    print()
+    
+    # Show available methods
+    print("Available methods:")
+    print("  - run_job(source_topic, sink_topic)")
+    print("  - run_job_with_custom_processing(source_topic, sink_topic)")
+    print("  - create_kafka_consumer(topic, group_id)")
+    print("  - create_kafka_producer(topic)")
+    print()
+
+
 def main():
     """Main demonstration function."""
     print("Flink Kafka Message Processing - Example Usage")
@@ -117,8 +141,17 @@ def main():
     # Demonstrate enrichment
     demonstrate_enrichment()
     
+    # Demonstrate Flink job creation
+    demonstrate_flink_job_creation()
+    
     print("\n" + "=" * 60)
-    print("Note: To test the full Flink job integration:")
+    print("Usage Examples:")
+    print("1. Basic job: python run_job.py")
+    print("2. Custom processing: python run_job.py --custom-processing")
+    print("3. Custom topics: python run_job.py --source-topic input --sink-topic output")
+    print("4. Custom Kafka: python run_job.py --kafka-bootstrap kafka:9092")
+    print()
+    print("To test the full integration:")
     print("1. Start Kafka and Flink using test containers")
     print("2. Run: python run_job.py")
     print("3. Send messages to topic-a")

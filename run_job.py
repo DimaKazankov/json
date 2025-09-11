@@ -49,10 +49,10 @@ Examples:
     parser.add_argument('--sink-topic', 
                        default=Config.SINK_TOPIC,
                        help=f'Sink topic name (default: {Config.SINK_TOPIC})')
-    parser.add_argument('--with-enrichment', 
+    parser.add_argument('--custom-processing', 
                        action='store_true',
-                       default=Config.ENABLE_ENRICHMENT,
-                       help='Use custom enrichment logic')
+                       default=False,
+                       help='Use custom processing with filtering')
     parser.add_argument('--parallelism', 
                        type=int,
                        default=Config.FLINK_PARALLELISM,
@@ -66,7 +66,7 @@ Examples:
     print(f"Kafka Bootstrap Servers: {args.kafka_bootstrap}")
     print(f"Source Topic: {args.source_topic}")
     print(f"Sink Topic: {args.sink_topic}")
-    print(f"Enrichment Enabled: {args.with_enrichment}")
+    print(f"Custom Processing: {args.custom_processing}")
     print(f"Parallelism: {args.parallelism}")
     print("=" * 60)
     
@@ -75,9 +75,9 @@ Examples:
         job = FlinkKafkaJob(kafka_bootstrap_servers=args.kafka_bootstrap)
         job.env.set_parallelism(args.parallelism)
         
-        if args.with_enrichment:
-            print("Starting job with custom enrichment...")
-            job.run_job_with_enrichment(args.source_topic, args.sink_topic)
+        if args.custom_processing:
+            print("Starting job with custom processing...")
+            job.run_job_with_custom_processing(args.source_topic, args.sink_topic)
         else:
             print("Starting job with basic processing...")
             job.run_job(args.source_topic, args.sink_topic)

@@ -231,6 +231,54 @@ def test_message_enricher():
     assert enriched["enriched_message_size"] > enriched["original_message_size"]
 
 
+def test_message_enrichment_function():
+    """Test the MessageEnrichmentFunction class directly."""
+    from src.flink_job import MessageEnrichmentFunction
+    import json
+    
+    # Create the enrichment function
+    enrichment_func = MessageEnrichmentFunction("input-topic", "output-topic")
+    
+    # Test with a valid JSON message
+    original_message = {
+        "user_id": "456",
+        "action": "purchase",
+        "amount": 99.99
+    }
+    
+    input_json = json.dumps(original_message)
+    enriched_json = enrichment_func.map(input_json)
+    enriched_message = json.loads(enriched_json)
+    
+    # Verify original data is preserved
+    assert enriched_message["user_id"] == "456"
+    assert enriched_message["action"] == "purchase"
+    assert enriched_message["amount"] == 99.99
+    
+    # Verify enrichment fields are added
+    assert "processed_at" in enriched_message
+    assert "processing_timestamp" in enriched_message
+    assert "message_id" in enriched_message
+    assert "source_topic" in enriched_message
+    assert "destination_topic" in enriched_message
+    
+    # Verify topic information is set correctly
+    assert enriched_message["source_topic"] == "input-topic"
+    assert enriched_message["destination_topic"] == "output-topic"
+    
+    # Test with malformed JSON
+    malformed_input = "invalid json {"
+    error_result = enrichment_func.map(malformed_input)
+    error_message = json.loads(error_result)
+    
+    # Verify error handling
+    assert "error" in error_message
+    assert error_message["error"] == "Failed to parse message"
+    assert error_message["original_message"] == malformed_input
+    assert error_message["source_topic"] == "input-topic"
+    assert error_message["destination_topic"] == "output-topic"
+
+
 def test_flink_job_creation():
     """Test FlinkKafkaJob class creation and configuration."""
     from src.flink_job import FlinkKafkaJob
@@ -239,12 +287,17 @@ def test_flink_job_creation():
     job = FlinkKafkaJob()
     assert job.kafka_bootstrap_servers == "localhost:9092"
     assert job.env is not None
-    assert job.table_env is not None
     
     # Test job creation with custom settings
     custom_bootstrap = "kafka:9092"
     job_custom = FlinkKafkaJob(kafka_bootstrap_servers=custom_bootstrap)
     assert job_custom.kafka_bootstrap_servers == custom_bootstrap
+    
+    # Test that the job has the expected methods
+    assert hasattr(job, 'create_kafka_consumer')
+    assert hasattr(job, 'create_kafka_producer')
+    assert hasattr(job, 'run_job')
+    assert hasattr(job, 'run_job_with_custom_processing')
 
 
 def test_configuration():

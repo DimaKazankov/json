@@ -8,7 +8,10 @@ from datetime import datetime
 from typing import Dict, Any
 
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.table import StreamTableEnvironment
+from pyflink.datastream.connectors import FlinkKafkaConsumer, FlinkKafkaProducer
+from pyflink.common.serialization import SimpleStringSchema
+from pyflink.common.typeinfo import Types
+from pyflink.datastream.functions import MapFunction
 
 
 class MessageEnricher:
@@ -54,8 +57,55 @@ class MessageEnricher:
         return enriched
 
 
+class MessageEnrichmentFunction(MapFunction):
+    """Custom MapFunction to enrich Kafka messages."""
+    
+    def __init__(self, source_topic: str, sink_topic: str):
+        self.source_topic = source_topic
+        self.sink_topic = sink_topic
+    
+    def map(self, value: str) -> str:
+        """
+        Map function to enrich incoming messages.
+        
+        Args:
+            value: JSON string from Kafka
+            
+        Returns:
+            Enriched JSON string
+        """
+        try:
+            # Parse the incoming message
+            original_message = json.loads(value)
+            
+            # Enrich the message
+            enriched_message = MessageEnricher.enrich_message(original_message)
+            
+            # Update topic information
+            enriched_message['source_topic'] = self.source_topic
+            enriched_message['destination_topic'] = self.sink_topic
+            
+            # Return enriched message as JSON string
+            return json.dumps(enriched_message)
+            
+        except (json.JSONDecodeError, TypeError) as e:
+            # Handle malformed messages
+            error_message = {
+                'error': 'Failed to parse message',
+                'original_message': value,
+                'error_details': str(e),
+                'processed_at': datetime.now().isoformat(),
+                'processing_timestamp': int(time.time() * 1000),
+                'source_topic': self.source_topic,
+                'destination_topic': self.sink_topic,
+                'enrichment_version': '1.0',
+                'enrichment_type': 'error_handling'
+            }
+            return json.dumps(error_message)
+
+
 class FlinkKafkaJob:
-    """Main Flink job class for Kafka message processing."""
+    """Main Flink job class for Kafka message processing using DataStream API."""
     
     def __init__(self, kafka_bootstrap_servers: str = "localhost:9092"):
         """
@@ -66,92 +116,62 @@ class FlinkKafkaJob:
         """
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.env = StreamExecutionEnvironment.get_execution_environment()
-        self.table_env = StreamTableEnvironment.create(self.env)
         
         # Set parallelism
         self.env.set_parallelism(1)
         
-    def create_kafka_source_table(self, topic: str) -> str:
+        # Set up checkpointing for exactly-once processing
+        self.env.enable_checkpointing(60000)  # Checkpoint every 60 seconds
+        
+    def create_kafka_consumer(self, topic: str, group_id: str = "flink-consumer-group"):
         """
-        Create a Kafka source table for reading messages.
+        Create a Kafka consumer for reading messages.
+        
+        Args:
+            topic: Kafka topic name
+            group_id: Consumer group ID
+            
+        Returns:
+            FlinkKafkaConsumer instance
+        """
+        properties = {
+            'bootstrap.servers': self.kafka_bootstrap_servers,
+            'group.id': group_id,
+            'auto.offset.reset': 'earliest',
+            'enable.auto.commit': 'true'
+        }
+        
+        return FlinkKafkaConsumer(
+            topics=topic,
+            deserialization_schema=SimpleStringSchema(),
+            properties=properties
+        )
+    
+    def create_kafka_producer(self, topic: str):
+        """
+        Create a Kafka producer for writing messages.
         
         Args:
             topic: Kafka topic name
             
         Returns:
-            Table name for the source
+            FlinkKafkaProducer instance
         """
-        table_name = f"kafka_source_{topic.replace('-', '_')}"
+        properties = {
+            'bootstrap.servers': self.kafka_bootstrap_servers,
+            'acks': 'all',  # Wait for all replicas to acknowledge
+            'retries': '3',
+            'batch.size': '16384',
+            'linger.ms': '5',
+            'buffer.memory': '33554432'
+        }
         
-        create_table_ddl = f"""
-        CREATE TABLE {table_name} (
-            message_id STRING,
-            original_data STRING,
-            processing_timestamp BIGINT,
-            processed_at STRING,
-            source_topic STRING,
-            destination_topic STRING,
-            enrichment_version STRING,
-            enrichment_type STRING,
-            original_message_size INT,
-            enriched_message_size INT,
-            processing_node STRING,
-            kafka_topic STRING,
-            kafka_partition INT,
-            kafka_offset BIGINT,
-            kafka_timestamp BIGINT,
-            proc_time AS PROCTIME()
-        ) WITH (
-            'connector' = 'kafka',
-            'topic' = '{topic}',
-            'properties.bootstrap.servers' = '{self.kafka_bootstrap_servers}',
-            'properties.group.id' = 'flink-consumer-group',
-            'scan.startup.mode' = 'earliest-offset',
-            'format' = 'json',
-            'json.fail-on-missing-field' = 'false',
-            'json.ignore-parse-errors' = 'true'
+        return FlinkKafkaProducer(
+            topic=topic,
+            serialization_schema=SimpleStringSchema(),
+            producer_config=properties
         )
-        """
-        
-        self.table_env.execute_sql(create_table_ddl)
-        return table_name
-        
-    def create_kafka_sink_table(self, topic: str) -> str:
-        """
-        Create a Kafka sink table for writing messages.
-        
-        Args:
-            topic: Kafka topic name
-            
-        Returns:
-            Table name for the sink
-        """
-        table_name = f"kafka_sink_{topic.replace('-', '_')}"
-        
-        create_table_ddl = f"""
-        CREATE TABLE {table_name} (
-            message_id STRING,
-            original_data STRING,
-            processing_timestamp BIGINT,
-            processed_at STRING,
-            source_topic STRING,
-            destination_topic STRING,
-            enrichment_version STRING,
-            enrichment_type STRING,
-            original_message_size INT,
-            enriched_message_size INT,
-            processing_node STRING
-        ) WITH (
-            'connector' = 'kafka',
-            'topic' = '{topic}',
-            'properties.bootstrap.servers' = '{self.kafka_bootstrap_servers}',
-            'format' = 'json'
-        )
-        """
-        
-        self.table_env.execute_sql(create_table_ddl)
-        return table_name
-        
+    
     def run_job(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
         """
         Run the Flink job to process messages from source topic to sink topic.
@@ -161,119 +181,62 @@ class FlinkKafkaJob:
             sink_topic: Sink Kafka topic name
         """
         print(f"Starting Flink job: {source_topic} -> {sink_topic}")
+        print(f"Kafka Bootstrap Servers: {self.kafka_bootstrap_servers}")
         
-        # Create source and sink tables
-        source_table = self.create_kafka_source_table(source_topic)
-        sink_table = self.create_kafka_sink_table(sink_topic)
+        # Create Kafka consumer and producer
+        kafka_consumer = self.create_kafka_consumer(source_topic)
+        kafka_producer = self.create_kafka_producer(sink_topic)
         
-        # Define the processing query
-        # This query enriches messages and forwards them to the sink topic
-        processing_query = f"""
-        INSERT INTO {sink_table}
-        SELECT 
-            message_id,
-            original_data,
-            processing_timestamp,
-            processed_at,
-            source_topic,
-            destination_topic,
-            enrichment_version,
-            enrichment_type,
-            original_message_size,
-            enriched_message_size,
-            processing_node
-        FROM {source_table}
-        """
+        # Create the data stream
+        source_stream = self.env.add_source(kafka_consumer)
+        
+        # Apply enrichment transformation
+        enriched_stream = source_stream.map(
+            MessageEnrichmentFunction(source_topic, sink_topic)
+        )
+        
+        # Add sink
+        enriched_stream.add_sink(kafka_producer)
         
         # Execute the job
         print("Executing Flink job...")
-        self.table_env.execute_sql(processing_query)
-        
-    def run_job_with_enrichment(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
+        self.env.execute("Kafka Message Enrichment Job")
+    
+    def run_job_with_custom_processing(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
         """
-        Run the Flink job with custom enrichment logic using DataStream API.
+        Run the Flink job with additional custom processing logic.
         
         Args:
             source_topic: Source Kafka topic name
             sink_topic: Sink Kafka topic name
         """
-        print(f"Starting Flink job with enrichment: {source_topic} -> {sink_topic}")
+        print(f"Starting Flink job with custom processing: {source_topic} -> {sink_topic}")
+        print(f"Kafka Bootstrap Servers: {self.kafka_bootstrap_servers}")
         
-        # Create source and sink tables
-        source_table = self.create_kafka_source_table(source_topic)
-        sink_table = self.create_kafka_sink_table(sink_topic)
+        # Create Kafka consumer and producer
+        kafka_consumer = self.create_kafka_consumer(source_topic)
+        kafka_producer = self.create_kafka_producer(sink_topic)
         
-        # Convert table to DataStream for custom processing
-        source_stream = self.table_env.to_data_stream(
-            self.table_env.from_path(source_table)
-        )
+        # Create the data stream
+        source_stream = self.env.add_source(kafka_consumer)
         
-        # Apply enrichment logic
+        # Apply enrichment transformation
         enriched_stream = source_stream.map(
-            lambda row: self._enrich_row(row)
+            MessageEnrichmentFunction(source_topic, sink_topic)
         )
         
-        # Convert back to table and insert into sink
-        enriched_table = self.table_env.from_data_stream(enriched_stream)
-        self.table_env.create_temporary_view("enriched_data", enriched_table)
-        
-        # Insert enriched data into sink
-        insert_query = f"""
-        INSERT INTO {sink_table}
-        SELECT 
-            message_id,
-            original_data,
-            processing_timestamp,
-            processed_at,
-            source_topic,
-            destination_topic,
-            enrichment_version,
-            enrichment_type,
-            original_message_size,
-            enriched_message_size,
-            processing_node
-        FROM enriched_data
-        """
-        
-        print("Executing Flink job with enrichment...")
-        self.table_env.execute_sql(insert_query)
-        
-    def _enrich_row(self, row) -> tuple:
-        """
-        Enrich a single row with additional metadata.
-        
-        Args:
-            row: Input row tuple
-            
-        Returns:
-            Enriched row tuple
-        """
-        # Extract original data
-        original_data = row[1] if len(row) > 1 else "{}"
-        
-        try:
-            # Parse original message
-            original_message = json.loads(original_data) if isinstance(original_data, str) else original_data
-        except (json.JSONDecodeError, TypeError):
-            original_message = {"raw_data": str(original_data)}
-        
-        # Enrich the message
-        enriched_message = MessageEnricher.enrich_message(original_message)
-        
-        # Return enriched row
-        return (
-            enriched_message.get('message_id', f"msg_{int(time.time() * 1000)}"),
-            json.dumps(enriched_message),
-            enriched_message.get('processing_timestamp', int(time.time() * 1000)),
-            enriched_message.get('processed_at', datetime.now().isoformat()),
-            enriched_message.get('source_topic', 'topic-a'),
-            enriched_message.get('destination_topic', 'topic-b'),
-            enriched_message.get('enrichment_version', '1.0'),
-            enriched_message.get('enrichment_type', 'basic_metadata'),
-            enriched_message.get('original_message_size', 0),
-            enriched_message.get('enriched_message_size', 0),
-            enriched_message.get('processing_node', 'flink-taskmanager-1')
+        # Add additional processing (e.g., filtering, windowing, etc.)
+        # For example, filter out error messages
+        filtered_stream = enriched_stream.filter(
+            lambda message: '"error"' not in message
         )
+        
+        # Add sink
+        filtered_stream.add_sink(kafka_producer)
+        
+        # Execute the job
+        print("Executing Flink job with custom processing...")
+        self.env.execute("Kafka Message Enrichment Job with Custom Processing")
 
 
 def main():
@@ -287,16 +250,16 @@ def main():
                        help='Source topic name (default: topic-a)')
     parser.add_argument('--sink-topic', default='topic-b',
                        help='Sink topic name (default: topic-b)')
-    parser.add_argument('--with-enrichment', action='store_true',
-                       help='Use custom enrichment logic')
+    parser.add_argument('--custom-processing', action='store_true',
+                       help='Use custom processing with filtering')
     
     args = parser.parse_args()
     
     # Create and run the job
     job = FlinkKafkaJob(kafka_bootstrap_servers=args.kafka_bootstrap)
     
-    if args.with_enrichment:
-        job.run_job_with_enrichment(args.source_topic, args.sink_topic)
+    if args.custom_processing:
+        job.run_job_with_custom_processing(args.source_topic, args.sink_topic)
     else:
         job.run_job(args.source_topic, args.sink_topic)
 
