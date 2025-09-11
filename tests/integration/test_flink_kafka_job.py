@@ -16,9 +16,8 @@ def test_flink_kafka_job_integration(flink_and_kafka):
     source_topic = "topic-a"
     sink_topic = "topic-b"
     
-    # Create Kafka producer and consumer
+    # Create Kafka producer
     producer = create_kafka_producer(bootstrap)
-    consumer = create_kafka_consumer(bootstrap, sink_topic)
     
     # Test messages to send
     test_messages = [
@@ -27,27 +26,64 @@ def test_flink_kafka_job_integration(flink_and_kafka):
         {"user_id": "789", "action": "logout", "session_duration": 3600, "timestamp": time.time()},
     ]
     
-    # Send test messages to source topic
+    # Create topics first
+    from kafka.admin import KafkaAdminClient, NewTopic
+    from kafka.errors import TopicAlreadyExistsError
+    
+    admin_client = KafkaAdminClient(
+        bootstrap_servers=bootstrap,
+        client_id='test-admin'
+    )
+    
+    try:
+        # Create source topic
+        source_topic_obj = NewTopic(name=source_topic, num_partitions=1, replication_factor=1)
+        admin_client.create_topics([source_topic_obj])
+        print(f"Created topic: {source_topic}")
+    except TopicAlreadyExistsError:
+        print(f"Topic {source_topic} already exists")
+    
+    try:
+        # Create sink topic
+        sink_topic_obj = NewTopic(name=sink_topic, num_partitions=1, replication_factor=1)
+        admin_client.create_topics([sink_topic_obj])
+        print(f"Created topic: {sink_topic}")
+    except TopicAlreadyExistsError:
+        print(f"Topic {sink_topic} already exists")
+    
+    # Start the actual Flink job first
+    flink_thread = start_flink_job(bootstrap, source_topic, sink_topic)
+    
+    # Wait for Flink job to start processing
+    print("Waiting for Flink job to start...")
+    time.sleep(5)
+    
+    # Send test messages to source topic AFTER Flink job is running
     print(f"Sending {len(test_messages)} messages to {source_topic}")
     for msg in test_messages:
         producer.send(source_topic, msg)
     producer.flush()
     
-    # Wait a moment for messages to be available
-    time.sleep(2)
+    # Wait a moment for messages to be processed
+    print("Waiting for messages to be processed...")
+    time.sleep(15)
     
-    # Start the actual Flink job
-    flink_thread = start_flink_job(bootstrap, source_topic, sink_topic)
-    
-    # Wait for Flink job to start processing
-    time.sleep(5)
+    # Create consumer after Flink job has been running
+    print("Creating consumer for sink topic...")
+    consumer = create_kafka_consumer(bootstrap, sink_topic, group_id="test-consumer-group")
     
     # Consume messages from sink topic
+    print("Starting to consume messages from sink topic...")
     consumed_messages = []
+    message_count = 0
     for msg in consumer:
+        message_count += 1
+        print(f"Received message {message_count}: {msg.value}")
         consumed_messages.append(msg.value)
         if len(consumed_messages) >= len(test_messages):
             break
+    
+    print(f"Total messages consumed: {len(consumed_messages)}")
     
     # Verify we received the expected number of messages
     assert len(consumed_messages) == len(test_messages), \
@@ -83,5 +119,3 @@ def test_flink_kafka_job_integration(flink_and_kafka):
         assert consumed_msg['enriched_message_size'] > consumed_msg['original_message_size']
     
     print(f"Successfully processed {len(consumed_messages)} messages with enrichment")
-
-

@@ -24,7 +24,7 @@ def create_kafka_producer(bootstrap_servers: str) -> KafkaProducer:
     )
 
 
-def create_kafka_consumer(bootstrap_servers: str, topic: str, timeout_ms: int = 30_000) -> KafkaConsumer:
+def create_kafka_consumer(bootstrap_servers: str, topic: str, timeout_ms: int = 30_000, group_id: str = None) -> KafkaConsumer:
     """
     Create a Kafka consumer for testing.
     
@@ -32,18 +32,23 @@ def create_kafka_consumer(bootstrap_servers: str, topic: str, timeout_ms: int = 
         bootstrap_servers: Kafka bootstrap servers
         topic: Topic to consume from
         timeout_ms: Consumer timeout in milliseconds
+        group_id: Consumer group ID (optional)
         
     Returns:
         Configured KafkaConsumer instance
     """
-    return KafkaConsumer(
-        topic,
-        bootstrap_servers=bootstrap_servers,
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        consumer_timeout_ms=timeout_ms,
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
-    )
+    consumer_config = {
+        'bootstrap_servers': bootstrap_servers,
+        'auto_offset_reset': "earliest",
+        'enable_auto_commit': True,
+        'consumer_timeout_ms': timeout_ms,
+        'value_deserializer': lambda b: json.loads(b.decode("utf-8")),
+    }
+    
+    if group_id:
+        consumer_config['group_id'] = group_id
+    
+    return KafkaConsumer(topic, **consumer_config)
 
 
 def start_flink_job(bootstrap_servers: str, source_topic: str, sink_topic: str) -> threading.Thread:

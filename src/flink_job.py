@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.connectors.kafka import KafkaSource, KafkaSink, KafkaRecordSerializationSchema
+from pyflink.datastream.connectors.kafka import KafkaSource, KafkaSink, KafkaRecordSerializationSchema, FlinkKafkaProducer
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import MapFunction
@@ -76,6 +76,8 @@ class MessageEnrichmentFunction(MapFunction):
             Enriched JSON string
         """
         try:
+            print(f"Processing message: {value}")
+            
             # Parse the incoming message
             original_message = json.loads(value)
             
@@ -87,10 +89,13 @@ class MessageEnrichmentFunction(MapFunction):
             enriched_message['destination_topic'] = self.sink_topic
             
             # Return enriched message as JSON string
-            return json.dumps(enriched_message)
+            result = json.dumps(enriched_message)
+            print(f"Enriched message: {result}")
+            return result
             
         except (json.JSONDecodeError, TypeError) as e:
             # Handle malformed messages
+            print(f"Error processing message: {e}")
             error_message = {
                 'error': 'Failed to parse message',
                 'original_message': value,
@@ -182,6 +187,29 @@ class FlinkKafkaJob:
             ) \
             .build()
     
+    def create_kafka_producer_sink(self, topic: str):
+        """
+        Create a Kafka producer sink using the older FlinkKafkaProducer API.
+        
+        Args:
+            topic: Kafka topic name
+            
+        Returns:
+            FlinkKafkaProducer instance
+        """
+        return FlinkKafkaProducer(
+            topic=topic,
+            serialization_schema=SimpleStringSchema(),
+            producer_config={
+                'bootstrap.servers': self.kafka_bootstrap_servers,
+                'acks': 'all',
+                'retries': '3',
+                'batch.size': '16384',
+                'linger.ms': '1',
+                'buffer.memory': '33554432'
+            }
+        )
+    
     def run_job(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
         """
         Run the Flink job to process messages from source topic to sink topic.
@@ -193,28 +221,46 @@ class FlinkKafkaJob:
         print(f"Starting Flink job: {source_topic} -> {sink_topic}")
         print(f"Kafka Bootstrap Servers: {self.kafka_bootstrap_servers}")
         
-        # Create Kafka source and sink
-        kafka_source = self.create_kafka_source(source_topic)
-        kafka_sink = self.create_kafka_sink(sink_topic)
-        
-        # Create the data stream
-        source_stream = self.env.from_source(
-            kafka_source, 
-            WatermarkStrategy.no_watermarks(), 
-            "Kafka Source"
-        )
-        
-        # Apply enrichment transformation
-        enriched_stream = source_stream.map(
-            MessageEnrichmentFunction(source_topic, sink_topic)
-        )
-        
-        # Add sink
-        enriched_stream.sink_to(kafka_sink)
-        
-        # Execute the job
-        print("Executing Flink job...")
-        self.env.execute("Kafka Message Enrichment Job")
+        try:
+            # Create Kafka source and sink
+            print("Creating Kafka source...")
+            kafka_source = self.create_kafka_source(source_topic)
+            print("Creating Kafka sink...")
+            kafka_sink = self.create_kafka_sink(sink_topic)
+            
+            # Create the data stream
+            print("Creating data stream...")
+            source_stream = self.env.from_source(
+                kafka_source, 
+                WatermarkStrategy.no_watermarks(), 
+                "Kafka Source"
+            )
+            
+            # Apply enrichment transformation
+            print("Applying enrichment transformation...")
+            enriched_stream = source_stream.map(
+                MessageEnrichmentFunction(source_topic, sink_topic)
+            )
+            
+            # Add a print sink for debugging BEFORE the Kafka sink
+            enriched_stream.print("Sink Output")
+            
+            # Try a simple approach - just print to console for now
+            # enriched_stream.print("Final Output")
+            
+            # Add Kafka sink
+            print("Adding Kafka sink...")
+            enriched_stream.sink_to(kafka_sink)
+            
+            # Execute the job
+            print("Executing Flink job...")
+            self.env.execute("Kafka Message Enrichment Job")
+            
+        except Exception as e:
+            print(f"Error in Flink job execution: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def run_job_with_custom_processing(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
         """
