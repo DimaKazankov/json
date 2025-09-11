@@ -226,28 +226,32 @@ class FlinkKafkaJob:
             print("Creating Kafka source...")
             kafka_source = self.create_kafka_source(source_topic)
             print("Creating Kafka producer sink...")
-            kafka_producer = self.create_kafka_producer_sink(sink_topic)
+            kafka_sink = self.create_kafka_sink(sink_topic)
             
             # Create the data stream
             print("Creating data stream...")
             source_stream = self.env.from_source(
                 kafka_source, 
                 WatermarkStrategy.no_watermarks(), 
-                "Kafka Source"
+                "Kafka Source",
+                type_info=Types.STRING()
             )
             
             # Apply enrichment transformation
             print("Applying enrichment transformation...")
             enriched_stream = source_stream.map(
-                MessageEnrichmentFunction(source_topic, sink_topic)
+                MessageEnrichmentFunction(source_topic, sink_topic),
+                output_type=Types.STRING()
             )
+
+            enriched_stream.sink_to(kafka_sink)
             
-            # Add a print sink for debugging BEFORE the Kafka sink
-            enriched_stream.print("Sink Output")
+            # Add both sinks to the same enriched stream
+            # print("Adding print sink for debugging...")
+            # enriched_stream.print("Sink Output")
             
-            # Add Kafka sink using the older API
-            print("Adding Kafka producer sink...")
-            enriched_stream.add_sink(kafka_producer)
+            # print("Adding Kafka producer sink...")
+            # enriched_stream.add_sink(kafka_producer)
             
             # Execute the job
             print("Executing Flink job...")
