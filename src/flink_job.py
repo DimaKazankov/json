@@ -2,112 +2,13 @@
 Flink Job for consuming messages from topic A and publishing enriched messages to topic B.
 """
 
-import json
-import time
-from datetime import datetime
-from typing import Dict, Any
-
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaSource, KafkaSink, KafkaRecordSerializationSchema, FlinkKafkaProducer
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.typeinfo import Types
-from pyflink.datastream.functions import MapFunction
 from pyflink.common import WatermarkStrategy
 
-
-class MessageEnricher:
-    """Utility class for enriching messages with additional metadata."""
-    
-    @staticmethod
-    def enrich_message(original_message: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Enrich the original message with additional fields.
-        
-        Args:
-            original_message: The original message from topic A
-            
-        Returns:
-            Enriched message with additional metadata
-        """
-        enriched = original_message.copy()
-        
-        # Add processing timestamp
-        enriched['processed_at'] = datetime.now().isoformat()
-        enriched['processing_timestamp'] = int(time.time() * 1000)
-        
-        # Add message ID if not present
-        if 'message_id' not in enriched:
-            enriched['message_id'] = f"msg_{int(time.time() * 1000)}"
-        
-        # Add source information
-        enriched['source_topic'] = 'topic-a'
-        enriched['destination_topic'] = 'topic-b'
-        
-        # Add enrichment metadata
-        enriched['enrichment_version'] = '1.0'
-        enriched['enrichment_type'] = 'basic_metadata'
-        
-        # Add message size information
-        message_str = json.dumps(original_message)
-        enriched['original_message_size'] = len(message_str)
-        enriched['enriched_message_size'] = len(json.dumps(enriched))
-        
-        # Add processing node information (simulated)
-        enriched['processing_node'] = 'flink-taskmanager-1'
-        
-        return enriched
-
-
-class MessageEnrichmentFunction(MapFunction):
-    """Custom MapFunction to enrich Kafka messages."""
-    
-    def __init__(self, source_topic: str, sink_topic: str):
-        self.source_topic = source_topic
-        self.sink_topic = sink_topic
-    
-    def map(self, value: str) -> str:
-        """
-        Map function to enrich incoming messages.
-        
-        Args:
-            value: JSON string from Kafka
-            
-        Returns:
-            Enriched JSON string
-        """
-        try:
-            print(f"Processing message: {value}")
-            
-            # Parse the incoming message
-            original_message = json.loads(value)
-            
-            # Enrich the message
-            enriched_message = MessageEnricher.enrich_message(original_message)
-            
-            # Update topic information
-            enriched_message['source_topic'] = self.source_topic
-            enriched_message['destination_topic'] = self.sink_topic
-            
-            # Return enriched message as JSON string
-            result = json.dumps(enriched_message)
-            print(f"Enriched message: {result}")
-            return result
-            
-        except (json.JSONDecodeError, TypeError) as e:
-            # Handle malformed messages
-            print(f"Error processing message: {e}")
-            error_message = {
-                'error': 'Failed to parse message',
-                'original_message': value,
-                'error_details': str(e),
-                'processed_at': datetime.now().isoformat(),
-                'processing_timestamp': int(time.time() * 1000),
-                'source_topic': self.source_topic,
-                'destination_topic': self.sink_topic,
-                'enrichment_version': '1.0',
-                'enrichment_type': 'error_handling'
-            }
-            return json.dumps(error_message)
+from src.message_enrichment_function import MessageEnrichmentFunction
 
 
 class FlinkKafkaJob:
