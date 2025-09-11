@@ -225,8 +225,8 @@ class FlinkKafkaJob:
             # Create Kafka source and sink
             print("Creating Kafka source...")
             kafka_source = self.create_kafka_source(source_topic)
-            print("Creating Kafka sink...")
-            kafka_sink = self.create_kafka_sink(sink_topic)
+            print("Creating Kafka producer sink...")
+            kafka_producer = self.create_kafka_producer_sink(sink_topic)
             
             # Create the data stream
             print("Creating data stream...")
@@ -245,12 +245,9 @@ class FlinkKafkaJob:
             # Add a print sink for debugging BEFORE the Kafka sink
             enriched_stream.print("Sink Output")
             
-            # Try a simple approach - just print to console for now
-            # enriched_stream.print("Final Output")
-            
-            # Add Kafka sink
-            print("Adding Kafka sink...")
-            enriched_stream.sink_to(kafka_sink)
+            # Add Kafka sink using the older API
+            print("Adding Kafka producer sink...")
+            enriched_stream.add_sink(kafka_producer)
             
             # Execute the job
             print("Executing Flink job...")
