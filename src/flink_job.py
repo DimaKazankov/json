@@ -8,10 +8,11 @@ from datetime import datetime
 from typing import Dict, Any
 
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.connectors import FlinkKafkaConsumer, FlinkKafkaProducer
+from pyflink.datastream.connectors.kafka import KafkaSource, KafkaSink, KafkaRecordSerializationSchema
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import MapFunction
+from pyflink.common import WatermarkStrategy
 
 
 class MessageEnricher:
@@ -117,60 +118,69 @@ class FlinkKafkaJob:
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.env = StreamExecutionEnvironment.get_execution_environment()
         
+        # Add Kafka connector JAR files
+        self._add_kafka_jars()
+        
         # Set parallelism
         self.env.set_parallelism(1)
         
         # Set up checkpointing for exactly-once processing
         self.env.enable_checkpointing(60000)  # Checkpoint every 60 seconds
+    
+    def _add_kafka_jars(self):
+        """Add Kafka connector JAR files to the Flink environment."""
+        import os
         
-    def create_kafka_consumer(self, topic: str, group_id: str = "flink-consumer-group"):
+        # Use local JAR files
+        jar_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "jars")
+        kafka_jars = [
+            os.path.join(jar_dir, "flink-sql-connector-kafka-3.0.1-1.18.jar"),
+            os.path.join(jar_dir, "flink-connector-kafka-3.0.1-1.18.jar")
+        ]
+        
+        for jar_path in kafka_jars:
+            if os.path.exists(jar_path):
+                self.env.add_jars(f"file://{jar_path}")
+            else:
+                print(f"Warning: JAR file not found: {jar_path}")
+        
+    def create_kafka_source(self, topic: str, group_id: str = "flink-consumer-group"):
         """
-        Create a Kafka consumer for reading messages.
+        Create a Kafka source for reading messages.
         
         Args:
             topic: Kafka topic name
             group_id: Consumer group ID
             
         Returns:
-            FlinkKafkaConsumer instance
+            KafkaSource instance
         """
-        properties = {
-            'bootstrap.servers': self.kafka_bootstrap_servers,
-            'group.id': group_id,
-            'auto.offset.reset': 'earliest',
-            'enable.auto.commit': 'true'
-        }
-        
-        return FlinkKafkaConsumer(
-            topics=topic,
-            deserialization_schema=SimpleStringSchema(),
-            properties=properties
-        )
+        return KafkaSource.builder() \
+            .set_bootstrap_servers(self.kafka_bootstrap_servers) \
+            .set_topics(topic) \
+            .set_group_id(group_id) \
+            .set_value_only_deserializer(SimpleStringSchema()) \
+            .build()
     
-    def create_kafka_producer(self, topic: str):
+    def create_kafka_sink(self, topic: str):
         """
-        Create a Kafka producer for writing messages.
+        Create a Kafka sink for writing messages.
         
         Args:
             topic: Kafka topic name
             
         Returns:
-            FlinkKafkaProducer instance
+            KafkaSink instance
         """
-        properties = {
-            'bootstrap.servers': self.kafka_bootstrap_servers,
-            'acks': 'all',  # Wait for all replicas to acknowledge
-            'retries': '3',
-            'batch.size': '16384',
-            'linger.ms': '5',
-            'buffer.memory': '33554432'
-        }
-        
-        return FlinkKafkaProducer(
-            topic=topic,
-            serialization_schema=SimpleStringSchema(),
-            producer_config=properties
-        )
+        return KafkaSink.builder() \
+            .set_bootstrap_servers(self.kafka_bootstrap_servers) \
+            .set_record_serializer(
+                KafkaRecordSerializationSchema.builder()
+                .set_topic(topic)
+                .set_value_serialization_schema(SimpleStringSchema())
+                .build()
+            ) \
+            .build()
     
     def run_job(self, source_topic: str = "topic-a", sink_topic: str = "topic-b"):
         """
@@ -183,12 +193,16 @@ class FlinkKafkaJob:
         print(f"Starting Flink job: {source_topic} -> {sink_topic}")
         print(f"Kafka Bootstrap Servers: {self.kafka_bootstrap_servers}")
         
-        # Create Kafka consumer and producer
-        kafka_consumer = self.create_kafka_consumer(source_topic)
-        kafka_producer = self.create_kafka_producer(sink_topic)
+        # Create Kafka source and sink
+        kafka_source = self.create_kafka_source(source_topic)
+        kafka_sink = self.create_kafka_sink(sink_topic)
         
         # Create the data stream
-        source_stream = self.env.add_source(kafka_consumer)
+        source_stream = self.env.from_source(
+            kafka_source, 
+            WatermarkStrategy.no_watermarks(), 
+            "Kafka Source"
+        )
         
         # Apply enrichment transformation
         enriched_stream = source_stream.map(
@@ -196,7 +210,7 @@ class FlinkKafkaJob:
         )
         
         # Add sink
-        enriched_stream.add_sink(kafka_producer)
+        enriched_stream.sink_to(kafka_sink)
         
         # Execute the job
         print("Executing Flink job...")
@@ -213,12 +227,16 @@ class FlinkKafkaJob:
         print(f"Starting Flink job with custom processing: {source_topic} -> {sink_topic}")
         print(f"Kafka Bootstrap Servers: {self.kafka_bootstrap_servers}")
         
-        # Create Kafka consumer and producer
-        kafka_consumer = self.create_kafka_consumer(source_topic)
-        kafka_producer = self.create_kafka_producer(sink_topic)
+        # Create Kafka source and sink
+        kafka_source = self.create_kafka_source(source_topic)
+        kafka_sink = self.create_kafka_sink(sink_topic)
         
         # Create the data stream
-        source_stream = self.env.add_source(kafka_consumer)
+        source_stream = self.env.from_source(
+            kafka_source, 
+            WatermarkStrategy.no_watermarks(), 
+            "Kafka Source"
+        )
         
         # Apply enrichment transformation
         enriched_stream = source_stream.map(
@@ -232,7 +250,7 @@ class FlinkKafkaJob:
         )
         
         # Add sink
-        filtered_stream.add_sink(kafka_producer)
+        filtered_stream.sink_to(kafka_sink)
         
         # Execute the job
         print("Executing Flink job with custom processing...")

@@ -5,7 +5,7 @@ Integration test for the Flink Kafka job using test containers.
 import time
 
 from tests.fixtures import flink_and_kafka
-from tests.kafka_utils import create_kafka_producer, create_kafka_consumer
+from tests.kafka_utils import create_kafka_producer, create_kafka_consumer, start_flink_job
 
 
 def test_flink_kafka_job_integration(flink_and_kafka):
@@ -36,21 +36,11 @@ def test_flink_kafka_job_integration(flink_and_kafka):
     # Wait a moment for messages to be available
     time.sleep(2)
     
-    # Start the Flink job (this would normally be done via REST API or CLI)
-    # For this test, we'll simulate the job processing by directly testing the enrichment logic
-    from src.flink_job import MessageEnricher
+    # Start the actual Flink job
+    flink_thread = start_flink_job(bootstrap, source_topic, sink_topic)
     
-    # Test message enrichment
-    enriched_messages = []
-    for msg in test_messages:
-        enriched = MessageEnricher.enrich_message(msg)
-        enriched_messages.append(enriched)
-        
-        # Send enriched message to sink topic (simulating Flink job output)
-        producer.send(sink_topic, enriched)
-    
-    producer.flush()
-    time.sleep(2)
+    # Wait for Flink job to start processing
+    time.sleep(5)
     
     # Consume messages from sink topic
     consumed_messages = []
@@ -85,8 +75,8 @@ def test_flink_kafka_job_integration(flink_and_kafka):
             assert consumed_msg[field] is not None, f"Enrichment field {field} is None"
         
         # Verify specific enrichment values
-        assert consumed_msg['source_topic'] == 'topic-a'
-        assert consumed_msg['destination_topic'] == 'topic-b'
+        assert consumed_msg['source_topic'] == source_topic
+        assert consumed_msg['destination_topic'] == sink_topic
         assert consumed_msg['enrichment_version'] == '1.0'
         assert consumed_msg['enrichment_type'] == 'basic_metadata'
         assert consumed_msg['original_message_size'] > 0
