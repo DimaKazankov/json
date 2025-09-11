@@ -3,10 +3,9 @@ Integration test for the Flink Kafka job using test containers.
 """
 
 import time
-import json
 
-from kafka import KafkaProducer, KafkaConsumer
 from tests.fixtures import flink_and_kafka
+from tests.kafka_utils import create_kafka_producer, create_kafka_consumer
 
 
 def test_flink_kafka_job_integration(flink_and_kafka):
@@ -18,20 +17,8 @@ def test_flink_kafka_job_integration(flink_and_kafka):
     sink_topic = "topic-b"
     
     # Create Kafka producer and consumer
-    producer = KafkaProducer(
-        bootstrap_servers=bootstrap,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-        retries=5,
-    )
-    
-    consumer = KafkaConsumer(
-        sink_topic,
-        bootstrap_servers=bootstrap,
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        consumer_timeout_ms=30_000,  # 30 second timeout
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
-    )
+    producer = create_kafka_producer(bootstrap)
+    consumer = create_kafka_consumer(bootstrap, sink_topic)
     
     # Test messages to send
     test_messages = [
